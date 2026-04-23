@@ -226,8 +226,20 @@ exports.handler = async (event) => {
 
   const lineEvents = parsed.events || [];
 
+  const allowedUserIds = process.env.ALLOWED_USER_IDS
+    ? process.env.ALLOWED_USER_IDS.split(",").map((id) => id.trim()).filter(Boolean)
+    : [];
+
   for (const lineEvent of lineEvents) {
     if (lineEvent.type !== "message") continue;
+
+    const userId = lineEvent.source?.userId;
+    console.log(`Received message from userId: ${userId}`);
+
+    if (allowedUserIds.length > 0 && !allowedUserIds.includes(userId)) {
+      console.log(`userId ${userId} is not allowed. Skipping.`);
+      continue;
+    }
 
     try {
       const messages = Array.isArray(lineEvent.message)
