@@ -42,7 +42,7 @@ async function fetchLineContent(messageId) {
   });
 }
 
-// Generate post content via Claude
+// Generate SNS post content via Claude
 async function generatePostContent(imageBase64, userText) {
   const hasImage = !!imageBase64;
   const userMessage = hasImage
@@ -79,7 +79,6 @@ async function generatePostContent(imageBase64, userText) {
 
   const raw = response.content[0].text;
 
-  // Parse title and body
   const titleMatch = raw.match(/タイトル[：:]\s*(.+)/);
   const bodyMatch = raw.match(/本文[：:]\s*([\s\S]+?)(?=ハッシュタグ[：:]|$)/);
   const tagsMatch = raw.match(/ハッシュタグ[：:]\s*([\s\S]+)$/);
@@ -87,84 +86,29 @@ async function generatePostContent(imageBase64, userText) {
   const title = titleMatch ? titleMatch[1].trim() : "まるはね農園より";
   const body = bodyMatch ? bodyMatch[1].trim() : raw;
   const tags = tagsMatch
-    ? tagsMatch[1]
-        .trim()
-        .split(/[\s\n]+/)
-        .filter((t) => t.startsWith("#"))
+    ? tagsMatch[1].trim().split(/[\s\n]+/).filter((t) => t.startsWith("#"))
     : [];
 
-  return { title, body, tags, raw };
+  return { title, body, tags };
 }
 
-// Upload image via PHP proxy on WordPress server
-async function uploadWordPressMedia(imageBuffer, filename) {
-  const proxyUrl = process.env.WP_PROXY_URL;
-  const proxyToken = process.env.WP_PROXY_TOKEN;
-
-  return new Promise((resolve, reject) => {
-    const parsed = new URL(proxyUrl);
-    const lib = parsed.protocol === "https:" ? https : http;
-
-    const req = lib.request(
-      {
-        hostname: parsed.hostname,
-        port: parsed.port || (parsed.protocol === "https:" ? 443 : 80),
-        path: parsed.pathname,
-        method: "POST",
-        headers: {
-          "X-Proxy-Token": proxyToken,
-          "X-Filename": filename,
-          "Content-Type": "image/jpeg",
-          "Content-Length": imageBuffer.length,
-        },
-      },
-      (res) => {
-        let data = "";
-        res.on("data", (c) => (data += c));
-        res.on("end", () => {
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            resolve(JSON.parse(data));
-          } else {
-            reject(new Error(`Proxy upload failed: ${res.statusCode} ${data}`));
-          }
-        });
-      }
-    );
-    req.on("error", reject);
-    req.write(imageBuffer);
-    req.end();
-  });
-}
-
-// Create WordPress post
-async function createWordPressPost(title, content, featuredMediaId, tags) {
-  const wpUrl = process.env.WP_URL.replace(/\/$/, "");
-  const credentials = Buffer.from(
-    `${process.env.WP_USERNAME}:${process.env.WP_APP_PASSWORD}`
-  ).toString("base64");
-
-  const postData = JSON.stringify({
-    title,
-    content,
-    status: "publish",
-    featured_media: featuredMediaId,
-    tags: [],
+// Reply to LINE user
+async function replyToLine(replyToken, text) {
+  const body = JSON.stringify({
+    replyToken,
+    messages: [{ type: "text", text }],
   });
 
   return new Promise((resolve, reject) => {
-    const parsed = new URL(`${wpUrl}/wp-json/wp/v2/posts`);
-    const lib = parsed.protocol === "https:" ? https : http;
-
-    const req = lib.request(
+    const req = https.request(
       {
-        hostname: parsed.hostname,
-        port: parsed.port || (parsed.protocol === "https:" ? 443 : 80),
-        path: parsed.pathname,
+        hostname: "api.line.me",
+        path: "/v2/bot/message/reply",
         method: "POST",
         headers: {
-          Authorization: `Basic ${credentials}`,
+          Authorization: `Bearer ${process.env.LINE_CHANNEL_ACCESS_TOKEN}`,
           "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(postData),
+          "Content-Length": Buffer.byteLength(body),
         },
       },
       (res) => {
@@ -172,15 +116,15 @@ async function createWordPressPost(title, content, featuredMediaId, tags) {
         res.on("data", (c) => (data += c));
         res.on("end", () => {
           if (res.statusCode >= 200 && res.statusCode < 300) {
-            resolve(JSON.parse(data));
+            resolve();
           } else {
-            reject(new Error(`WP post failed: ${res.statusCode} ${data}`));
+            reject(new Error(`LINE reply failed: ${res.statusCode} ${data}`));
           }
         });
       }
     );
     req.on("error", reject);
-    req.write(postData);
+    req.write(body);
     req.end();
   });
 }
@@ -191,7 +135,6 @@ exports.handler = async (event) => {
     return { statusCode: 405, body: "Method Not Allowed" };
   }
 
-  // Verify LINE signature
   const signature = event.headers["x-line-signature"];
   if (!signature || !verifyLineSignature(event.body, signature)) {
     return { statusCode: 401, body: "Unauthorized" };
@@ -226,7 +169,6 @@ exports.handler = async (event) => {
         ? lineEvent.message
         : [lineEvent.message];
 
-      // Collect image and text from this event
       let imageBuffer = null;
       let userText = "";
 
@@ -238,35 +180,19 @@ exports.handler = async (event) => {
         }
       }
 
-      // Skip if neither image nor text
       if (!imageBuffer && !userText) continue;
 
       const imageBase64 = imageBuffer ? imageBuffer.toString("base64") : null;
-
-      // Generate post content
       const { title, body, tags } = await generatePostContent(imageBase64, userText);
 
-      // Upload image to WordPress (image only)
-      let featuredMediaId = 0;
-      if (imageBuffer) {
-        const filename = `farm-${Date.now()}.jpg`;
-        const mediaData = await uploadWordPressMedia(imageBuffer, filename);
-        featuredMediaId = mediaData.id;
-      }
+      const replyText = `【${title}】\n\n${body}\n\n${tags.join(" ")}`;
+      await replyToLine(lineEvent.replyToken, replyText);
 
-      // Build post content with hashtags
-      const hashtags = tags.join(" ");
-      const fullContent = `<p>${body.replace(/\n/g, "<br>")}</p>\n<p>${hashtags}</p>`;
-
-      // Create WordPress post
-      await createWordPressPost(title, fullContent, featuredMediaId, tags);
-
-      console.log(`Post created: ${title} (image: ${!!imageBuffer})`);
+      console.log(`Replied: ${title}`);
     } catch (err) {
       console.error("Error processing LINE event:", err);
     }
   }
 
-  // LINE requires 200 OK
   return { statusCode: 200, body: JSON.stringify({ status: "ok" }) };
 };
