@@ -1,0 +1,18 @@
+{
+  "name": "maruhane-farm-webhook",
+  "version": "1.0.0",
+  "description": "LINE → Claude → WordPress auto-posting for Maruhane Farm",
+  "main": "netlify/functions/webhook.js",
+  "scripts": {
+    "dev": "netlify dev"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.52.0"
+  },
+  "devDependencies": {
+    "netlify-cli": "^17.0.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
