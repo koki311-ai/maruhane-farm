@@ -103,15 +103,13 @@ async function generatePostContent(imageBase64, userText) {
   return { title, body, tags, raw };
 }
 
-// Upload image to WordPress Media Library
+// Upload image via PHP proxy on WordPress server
 async function uploadWordPressMedia(imageBuffer, filename) {
-  const wpUrl = process.env.WP_URL.replace(/\/$/, "");
-  const credentials = Buffer.from(
-    `${process.env.WP_USERNAME}:${process.env.WP_APP_PASSWORD}`
-  ).toString("base64");
+  const proxyUrl = process.env.WP_PROXY_URL;
+  const proxyToken = process.env.WP_PROXY_TOKEN;
 
   return new Promise((resolve, reject) => {
-    const parsed = new URL(`${wpUrl}/wp-json/wp/v2/media`);
+    const parsed = new URL(proxyUrl);
     const lib = parsed.protocol === "https:" ? https : http;
 
     const req = lib.request(
@@ -121,9 +119,9 @@ async function uploadWordPressMedia(imageBuffer, filename) {
         path: parsed.pathname,
         method: "POST",
         headers: {
-          Authorization: `Basic ${credentials}`,
+          "X-Proxy-Token": proxyToken,
+          "X-Filename": filename,
           "Content-Type": "image/jpeg",
-          "Content-Disposition": `attachment; filename="${filename}"`,
           "Content-Length": imageBuffer.length,
         },
       },
@@ -134,7 +132,7 @@ async function uploadWordPressMedia(imageBuffer, filename) {
           if (res.statusCode >= 200 && res.statusCode < 300) {
             resolve(JSON.parse(data));
           } else {
-            reject(new Error(`WP media upload failed: ${res.statusCode} ${data}`));
+            reject(new Error(`Proxy upload failed: ${res.statusCode} ${data}`));
           }
         });
       }
