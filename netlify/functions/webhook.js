@@ -147,6 +147,11 @@ exports.handler = async (event) => {
     return { statusCode: 401, body: "Unauthorized" };
   }
 
+  // LINE webhook verification sends empty body or empty events
+  if (!event.body || event.body.trim() === "") {
+    return { statusCode: 200, body: JSON.stringify({ status: "ok" }) };
+  }
+
   let parsed;
   try {
     parsed = JSON.parse(event.body);
@@ -155,6 +160,10 @@ exports.handler = async (event) => {
   }
 
   const lineEvents = parsed.events || [];
+
+  if (lineEvents.length === 0) {
+    return { statusCode: 200, body: JSON.stringify({ status: "ok" }) };
+  }
 
   const allowedUserIds = process.env.ALLOWED_USER_IDS
     ? process.env.ALLOWED_USER_IDS.split(",").map((id) => id.trim()).filter(Boolean)
