@@ -44,9 +44,17 @@ async function fetchLineContent(messageId) {
 
 // Generate post content via Claude
 async function generatePostContent(imageBase64, userText) {
-  const userMessage = userText
-    ? `畑で撮った写真です。ユーザーからのメモ：「${userText}」`
-    : "畑で撮った写真です。";
+  const hasImage = !!imageBase64;
+  const userMessage = hasImage
+    ? (userText ? `畑で撮った写真です。ユーザーからのメモ：「${userText}」` : "畑で撮った写真です。")
+    : (userText || "まるはね農園からのお知らせです。");
+
+  const content = hasImage
+    ? [
+        { type: "image", source: { type: "base64", media_type: "image/jpeg", data: imageBase64 } },
+        { type: "text", text: userMessage },
+      ]
+    : [{ type: "text", text: userMessage }];
 
   const response = await client.messages.create({
     model: "claude-opus-4-7",
@@ -66,22 +74,7 @@ async function generatePostContent(imageBase64, userText) {
 タイトル：（20字以内）
 本文：（150〜250字）
 ハッシュタグ：`,
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: "image/jpeg",
-              data: imageBase64,
-            },
-          },
-          { type: "text", text: userMessage },
-        ],
-      },
-    ],
+    messages: [{ role: "user", content }],
   });
 
   const raw = response.content[0].text;
@@ -245,26 +238,30 @@ exports.handler = async (event) => {
         }
       }
 
-      // Skip if no image
-      if (!imageBuffer) continue;
+      // Skip if neither image nor text
+      if (!imageBuffer && !userText) continue;
 
-      const imageBase64 = imageBuffer.toString("base64");
+      const imageBase64 = imageBuffer ? imageBuffer.toString("base64") : null;
 
       // Generate post content
       const { title, body, tags } = await generatePostContent(imageBase64, userText);
 
-      // Upload image to WordPress
-      const filename = `farm-${Date.now()}.jpg`;
-      const mediaData = await uploadWordPressMedia(imageBuffer, filename);
+      // Upload image to WordPress (image only)
+      let featuredMediaId = 0;
+      if (imageBuffer) {
+        const filename = `farm-${Date.now()}.jpg`;
+        const mediaData = await uploadWordPressMedia(imageBuffer, filename);
+        featuredMediaId = mediaData.id;
+      }
 
       // Build post content with hashtags
       const hashtags = tags.join(" ");
       const fullContent = `<p>${body.replace(/\n/g, "<br>")}</p>\n<p>${hashtags}</p>`;
 
       // Create WordPress post
-      await createWordPressPost(title, fullContent, mediaData.id, tags);
+      await createWordPressPost(title, fullContent, featuredMediaId, tags);
 
-      console.log(`Post created: ${title}`);
+      console.log(`Post created: ${title} (image: ${!!imageBuffer})`);
     } catch (err) {
       console.error("Error processing LINE event:", err);
     }
