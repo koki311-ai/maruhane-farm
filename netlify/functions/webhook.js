@@ -111,17 +111,6 @@ async function uploadWordPressMedia(imageBuffer, filename) {
   ).toString("base64");
 
   return new Promise((resolve, reject) => {
-    const boundary = `----FormBoundary${Date.now()}`;
-    const disposition = `Content-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: image/jpeg\r\n\r\n`;
-    const prefix = `--${boundary}\r\n${disposition}`;
-    const suffix = `\r\n--${boundary}--\r\n`;
-
-    const body = Buffer.concat([
-      Buffer.from(prefix),
-      imageBuffer,
-      Buffer.from(suffix),
-    ]);
-
     const parsed = new URL(`${wpUrl}/wp-json/wp/v2/media`);
     const lib = parsed.protocol === "https:" ? https : http;
 
@@ -133,9 +122,9 @@ async function uploadWordPressMedia(imageBuffer, filename) {
         method: "POST",
         headers: {
           Authorization: `Basic ${credentials}`,
-          "Content-Type": `multipart/form-data; boundary=${boundary}`,
+          "Content-Type": "image/jpeg",
           "Content-Disposition": `attachment; filename="${filename}"`,
-          "Content-Length": body.length,
+          "Content-Length": imageBuffer.length,
         },
       },
       (res) => {
@@ -151,7 +140,7 @@ async function uploadWordPressMedia(imageBuffer, filename) {
       }
     );
     req.on("error", reject);
-    req.write(body);
+    req.write(imageBuffer);
     req.end();
   });
 }
